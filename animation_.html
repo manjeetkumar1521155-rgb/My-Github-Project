@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Hand Tracked Particles</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        video { display: none; } /* Hide the raw webcam feed */
+    </style>
+</head>
+<body>
+    <video id="webcam" autoplay playsinline></video>
+    <script>
+        // --- Setup Three.js ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const particleCount = 5000;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const targetPositions = new Float32Array(particleCount * 3);
+        
+        // Initial random cloud
+        for(let i=0; i<particleCount*3; i++)
+        {
+            positions[i] = (Math.random() - 0.5) * 10;
+            targetPositions[i] = positions[i];
+        }
+        
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const material = new THREE.PointsMaterial({ size: 0.05, color: 0x00ff88, transparent: true });
+        const points = new THREE.Points(geometry, material);
+        scene.add(points);
+        camera.position.z = 5;
+
+        // --- Shape Templates ---
+        function createHeart() {
+            for (let i = 0; i < particleCount; i++) 
+            {
+                const t = Math.random() * Math.PI * 2;
+                const x = 16 * Math.pow(Math.sin(t), 3);
+                const y = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+                targetPositions[i*3] = x * 0.1;
+                targetPositions[i*3+1] = y * 0.1;
+                targetPositions[i*3+2] = (Math.random() - 0.5) * 2;
+            }
+        }
+
+        function createSaturn() {
+            for (let i = 0; i < particleCount; i++) {
+                if (i < particleCount * 0.6) { // Planet
+                    const u = Math.random(); const v = Math.random();
+                    const theta = 2 * Math.PI * u; const phi = Math.acos(2 * v - 1);
+                    targetPositions[i*3] = Math.sin(phi) * Math.cos(theta) * 1.5;
+                    targetPositions[i*3+1] = Math.sin(phi) * Math.sin(theta) * 1.5;
+                    targetPositions[i*3+2] = Math.cos(phi) * 1.5;
+                } else { // Rings
+                    const angle = Math.random() * Math.PI * 2;
+                    const radius = 2.2 + Math.random() * 1.5;
+                    targetPositions[i*3] = Math.cos(angle) * radius;
+                    targetPositions[i*3+1] = Math.sin(angle) * radius * 0.3; // Tilt
+                    targetPositions[i*3+2] = Math.sin(angle) * radius;
+                }
+            }
+        }
+
+        // --- MediaPipe Hand Logic ---
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+
+        hands.onResults((results) => 
+        {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0)
+            {
+                const landmarks = results.multiHandLandmarks[0];
+                
+                // 1. PINCH DETECTION (Expansion)
+                const thumb = landmarks[4];
+                const index = landmarks[8];
+                const dist = Math.sqrt(Math.pow(thumb.x - index.x, 2) + Math.pow(thumb.y - index.y, 2));
+                points.scale.set(1 + dist * 5, 1 + dist * 5, 1 + dist * 5);
+
+                // 2. COLOR CHANGE (Height)
+                material.color.setHSL(landmarks[0].y, 1.0, 0.5);
+
+                // 3. TEMPLATE SWITCHING (Horizontal Position)
+                if (landmarks[0].x < 0.3) createHeart();
+                else if (landmarks[0].x > 0.7) createSaturn();
+            }
+        });
+
+        const videoElement = document.getElementById('webcam');
+        const cameraUtils = new Camera(videoElement, 
+        {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 640, height: 480
+        });
+        cameraUtils.start();
+
+        // --- Animation Loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Smoothly move particles toward target
+            const currentPos = geometry.attributes.position.array;
+            for (let i = 0; i < currentPos.length; i++) 
+            {
+                currentPos[i] += (targetPositions[i] - currentPos[i]) * 0.1;
+            }
+            geometry.attributes.position.needsUpdate = true;
+            
+            points.rotation.y += 0.01;
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
